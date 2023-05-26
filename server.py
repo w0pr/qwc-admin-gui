@@ -38,8 +38,7 @@ app.config['QWC_GROUP_REGISTRATION_ENABLED'] = os.environ.get(
     'GROUP_REGISTRATION_ENABLED', 'True') == 'True'
 app.config['IDLE_TIMEOUT'] = os.environ.get('IDLE_TIMEOUT', 0)
 
-app.config['WTF_CSRF_ENABLED'] = os.environ.get(
-    'WTF_CSRF_ENABLED', 'True') == 'True'
+app.config['JWT_COOKIE_CSRF_PROTECT'] = False
 app.config['WTF_CSRF_SSL_STRICT'] = os.environ.get(
     'WTF_CSRF_SSL_STRICT', 'True') == 'True'
 
@@ -172,15 +171,28 @@ if app.config.get('QWC_GROUP_REGISTRATION_ENABLED'):
 access_control = AccessControl(handler, app.logger)
 
 
-app.config['PLUGINS'] = []
-for plugin in handler().config().get("plugins", []):
-    app.logger.info("Loading plugin '%s'" % plugin)
-    try:
-        mod = importlib.import_module("plugins." + plugin)
-        mod.load_plugin(app, handler)
-        app.config['PLUGINS'].append({"id": plugin, "name": mod.name})
-    except Exception as e:
-        app.logger.warning("Could not load plugin %s: %s" % (plugin, str(e)))
+plugins_loaded = False
+@app.before_request
+def load_plugins():
+    global plugins_loaded
+    if not plugins_loaded:
+        # HACK to work around
+        #     The setup method 'add_url_rule' can no longer be called on the application.
+        #     It has already handled its first request, any changes will not be applied consistently.
+        # From the flask code, before_request is called immediately after _got_first_request=True, so
+        # there should be no harm clearing the flag again temporarily
+        app._got_first_request = False
+        plugins_loaded = True
+        app.config['PLUGINS'] = []
+        for plugin in handler().config().get("plugins", []):
+            app.logger.info("Loading plugin '%s'" % plugin)
+            try:
+                mod = importlib.import_module("plugins." + plugin)
+                mod.load_plugin(app, handler)
+                app.config['PLUGINS'].append({"id": plugin, "name": mod.name})
+            except Exception as e:
+                app.logger.warning("Could not load plugin %s: %s" % (plugin, str(e)))
+        app._got_first_request = True
 
 
 @app.before_request
